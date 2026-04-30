@@ -1,133 +1,164 @@
-class Star_cinema:
-    hall_list=[]
+import mysql.connector
+from tkinter import *
+from tkinter import messagebox, ttk
 
-    def entry_hall(self,hall):
-        self.hall_list.append(hall)
+
+def get_db():
+    try:
+        return mysql.connector.connect(
+            host="localhost",
+            user="root",      
+            password="root",
+            database="cineplex_db"
+        )
+    except mysql.connector.Error as err:
+        messagebox.showerror("Database Error", f"Error: {err}")
+        return None
+
+
+def show_bookings_window():
+    # Create a new popup window
+    view_win = Toplevel()
+    view_win.title("Sales History - All Bookings")
+    view_win.geometry("700x400")
+
+    Label(view_win, text="ALL BOOKING RECORDS", font=("Arial", 14, "bold"), pady=10).pack()
+
+    # Create Table
+    cols = ("ID", "Customer Name", "Movie Title", "Seats", "Total Paid")
+    tree_view = ttk.Treeview(view_win, columns=cols, show="headings")
     
-    @classmethod
-    def hall_show_list(self,hall_name):
-        for hall in self.hall_list:
-            if hall._Hall__name==hall_name:
-                hall.view_show_list()
-                return
-        print("Invalid Hall name")
-
-
-class Hall(Star_cinema):
-
-    def __init__(self,name,rows,cols,hall_no):
-        self.__name=name
-        self.__rows=rows
-        self.__cols=cols
-        self.__hall_no=hall_no
-        self.__show_list=[]
-        self.__seats={}
-        super().entry_hall(self)
+    for col in cols:
+        tree_view.heading(col, text=col)
+        tree_view.column(col, width=120)
     
-    def __repr__(self):
-        return f"{self.__hall_no}--> {self.__name}"
-    
-    def entry_show(self,show_id,movie_name,Time):
-        show_info=(show_id,movie_name,Time)
-        self.__show_list.append(show_info)
-        seat_matrix=[]
-        for row in range(self.__rows):
-            rows=[]
-            for col in range(self.__cols):
-                rows.append(0) 
-            seat_matrix.append(rows)
-        self.__seats[show_id]=seat_matrix
+    tree_view.pack(pady=10, padx=10, fill=BOTH, expand=True)
 
-                
-    def book_ticket(self,show_id,seat_tuple):
-        if show_id not in self.__seats:
-            print(f"Show unavailable")
+    # Fetch data from Database using JOIN
+    db = get_db()
+    if db:
+        cursor = db.cursor()
+        # SQL JOIN to get Movie Title instead of just Movie ID
+        query = """
+            SELECT b.id, b.customer_name, m.title, b.seats_booked, b.total_price 
+            FROM bookings b 
+            JOIN movies m ON b.movie_id = m.id
+            ORDER BY b.id DESC
+        """
+        cursor.execute(query)
+        for row in cursor.fetchall():
+            tree_view.insert("", END, values=row)
+        db.close()
+
+    Button(view_win, text="Close", command=view_win.destroy, bg="grey", fg="white").pack(pady=10)
+
+# --- FUNCTION: LOGOUT ---
+def logout(current_window):
+    current_window.destroy()
+    show_login_screen()
+
+# --- MAIN DASHBOARD WINDOW ---
+def open_booking_window(user_full_name):
+    root = Tk()
+    root.title("Cineplex Staff Dashboard")
+    root.geometry("800x650")
+
+    # Header
+    header = Frame(root, bg="#333", pady=10)
+    header.pack(fill=X)
+    Label(header, text=f"Staff: {user_full_name}", fg="white", bg="#333").pack(side=LEFT, padx=20)
+    Button(header, text="Logout", command=lambda: logout(root), bg="red", fg="white").pack(side=RIGHT, padx=20)
+
+    # Internal Logic
+    def refresh_data():
+        for item in tree.get_children(): tree.delete(item)
+        db = get_db()
+        if db:
+            cursor = db.cursor()
+            cursor.execute("SELECT id, title, price, available_seats FROM movies")
+            for row in cursor.fetchall(): tree.insert("", END, values=row)
+            db.close()
+
+    def handle_booking():
+        name, m_id, seats = ent_name.get(), ent_mid.get(), ent_seats.get()
+        if not (name and m_id and seats):
+            messagebox.showwarning("Input Error", "All fields required!")
             return
-        seat_matrix=self.__seats[show_id]
-        for row,col in seat_tuple:
-            if row>0 and row<=self.__rows and col>0 and col<=self.__cols:
-                if seat_matrix[row-1][col-1]==0:
-                    seat_matrix[row-1][col-1]='-'
-                    print(f"Seat at row: {row} and col: {col} successfully booked ")
-                else:
-                    print(f"seat is already booked")
+
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute("SELECT title, price, available_seats FROM movies WHERE id=%s", (m_id,))
+        movie = cursor.fetchone()
+
+        if movie and movie[2] >= int(seats):
+            total = movie[1] * int(seats)
+            cursor.execute("UPDATE movies SET available_seats = available_seats - %s WHERE id = %s", (seats, m_id))
+            cursor.execute("INSERT INTO bookings (customer_name, movie_id, seats_booked, total_price) VALUES (%s, %s, %s, %s)",
+                           (name, m_id, seats, total))
+            db.commit()
+            messagebox.showinfo("Success", f"Booked for {name}!\nTotal: ${total}")
+            refresh_data()
+            ent_name.delete(0, END); ent_mid.delete(0, END); ent_seats.delete(0, END)
+        else:
+            messagebox.showerror("Error", "Check Movie ID or Seat availability")
+        db.close()
+
+    # UI Layout
+    Label(root, text="AVAILABLE MOVIES", font=("Arial", 14, "bold")).pack(pady=10)
+    columns = ("ID", "Movie Title", "Price", "Available Seats")
+    tree = ttk.Treeview(root, columns=columns, show="headings", height=6)
+    for col in columns: tree.heading(col, text=col)
+    tree.pack(pady=5, padx=20, fill=X)
+
+    # customer form
+    form = Frame(root)
+    form.pack(pady=15)
+    Label(form, text="Customer:").grid(row=0, column=0)
+    ent_name = Entry(form); ent_name.grid(row=0, column=1, padx=10, pady=5)
+    Label(form, text="Movie ID:").grid(row=1, column=0)
+    ent_mid = Entry(form); ent_mid.grid(row=1, column=1, padx=10, pady=5)
+    Label(form, text="Seats:").grid(row=2, column=0)
+    ent_seats = Entry(form); ent_seats.grid(row=2, column=1, padx=10, pady=5)
+
+    # issue ticket Button
+    btn_frame = Frame(root)
+    btn_frame.pack(pady=10)
+
+    Button(btn_frame, text="Issue Ticket", command=handle_booking, bg="green", fg="white", width=15, font=("Arial", 11, "bold")).grid(row=0, column=0, padx=10)
+    
+    # view booking button
+    Button(btn_frame, text="View All Bookings", command=show_bookings_window, bg="blue", fg="white", width=15, font=("Arial", 11, "bold")).grid(row=0, column=1, padx=10)
+
+    refresh_data()
+    root.mainloop()
+
+# --- LOGIN SCREEN ---
+def show_login_screen():
+    login_win = Tk()
+    login_win.title("Cineplex Login")
+    login_win.geometry("350x300")
+
+    def attempt_login():
+        u, p = entry_user.get(), entry_pw.get()
+        db = get_db()
+        if db:
+            cursor = db.cursor()
+            cursor.execute("SELECT * FROM employees WHERE username=%s AND password=%s", (u, p))
+            result = cursor.fetchone()
+            db.close()
+            if result:
+                login_win.destroy()
+                open_booking_window(result[3])
             else:
-                print(f"Invalid seat range ({row},{col})")
-    
-    def view_show_list(self):
-        print("\n----Shows running----\n")
-        if len(self.__show_list)==0:
-            print("No show available")
-        else:
-            for shows_info in self.__show_list:
-                print(f"show id: {shows_info[0]} Movie name:----{shows_info[1]}----\n Time: {shows_info[2]}")
-        
-    
-    def view_available_seats(self,show_id):
-        if show_id not in self.__seats:
-            print("Invalid Show id")
-        else:
-            for shows in self.__show_list:
-                if shows[0]==show_id:
-                    print(f"\n----{shows[1]}----")
-                    break
-            seat_matrix=self.__seats[show_id]
-            print("----Available Seats----\n")
-            for row in range(self.__rows):
-                for col in range(self.__cols):
-                    if seat_matrix[row][col]==0:
-                        print(f"     Seat({row+1},{col+1})")
-            print("\n----layout view----\n")
-            for row in seat_matrix:
-                print('    ',*row)
-                    
-                 
-            
-vip=Hall("vip",5,5,"1")
-premium=Hall("premium",6,6,"2")
-vip.entry_show("101",'Jawan',"25/11/2024")
-vip.entry_show("102","Dunki","27/11/2024")
-vip.entry_show("103","Lapataa Ladies","28/11/2024")
+                messagebox.showerror("Error", "Invalid login")
 
-counter_open=True
-while counter_open:
-    print("\n-----Ticket Counter-----")
-    print("\nAvailable option -->")
-    print("1. View Halls")
-    print("2. View running shows in Halls")
-    print("3. View available seats")
-    print("4. Book Ticket")
-    print("5. Exit")
+    Label(login_win, text="STAFF LOGIN", font=("Arial", 16, "bold")).pack(pady=20)
+    Label(login_win, text="Username").pack()
+    entry_user = Entry(login_win); entry_user.pack(pady=5)
+    Label(login_win, text="Password").pack()
+    entry_pw = Entry(login_win, show="*"); entry_pw.pack(pady=5)
+    Button(login_win, text="Login", command=attempt_login, bg="#444", fg="white", width=15).pack(pady=20)
+    login_win.mainloop()
 
-    option=int(input("Choose option: "))
-    if option==2:
-        hall=str(input("Enter Hall name: "))
-        Star_cinema.hall_show_list(hall)
-    elif option==1:
-        print("\n-----Halls-----\n")
-        print(" ",*Star_cinema.hall_list)
-    elif option==3:
-        show_id=input("Enter show id: ")
-        vip.view_available_seats(show_id)
-    elif option==4:
-        show_id=input("Enter show id: ")
-        no_of_tickets=int(input("Enter Ticket Quantity: "))
-        seat_list=[]
-        for i in range(no_of_tickets):
-            row=int(input(f"Enter row of seat {i+1} : "))
-            col=int(input(f"Enter coloumn of seat {i+1}: "))
-            seat_list.append((row,col))
-        currentHall=None
-        for Halls in Star_cinema.hall_list:
-            for shows in Halls._Hall__show_list:
-                if shows[0]==show_id:
-                    currentHall=Halls
-                    break
-        currentHall.book_ticket(show_id,seat_list)
-    elif option==5:
-        break
-
-
-
-
-        
+if __name__ == "__main__":
+    show_login_screen()
